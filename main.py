@@ -217,19 +217,19 @@ while running:
                     game_over = True
                     game_over_time = pygame.time.get_ticks()
                     winner_name = player_names[current_player_idx]
-                    print(f"VITÓRIA: {winner_name} meteu a preta e ganhou o jogo!")
+                    print(f"Victory: {winner_name} scored the 8 ball!")
                 else:
-                    # Derrota por falta / bola preta fora de tempo
+                    # 8 ball 
                     game_over = True
                     game_over_time = pygame.time.get_ticks()
                     winner_name = player_names[1 - current_player_idx]
-                    print(f"DERROTA: Jogada ilegal com a preta. {winner_name} ganha automaticamente!")
+                    print(f"Defeat: Illegal move. {winner_name} won!")
             
-            # --- Troca de turno ---
+            # --- Change turns ---
             if not game_over:
                 if foul or not keep_turn:
                     current_player_idx = 1 - current_player_idx
-                    print(f"TURNO: Agora joga o Player {current_player_idx + 1}")
+                    print(f"Turn: Player turn {current_player_idx + 1}")
             
             # Fim da tacada - limpa a variável para a próxima jogada
             shot_taken = False 
@@ -241,7 +241,7 @@ while running:
             check_all_collisions(balls, TABLE_X, TABLE_Y, TABLE_W, TABLE_H, CUSHION_SIZE, dt_multiplier)            
 
     # ==========================================
-    # 3. RENDERING (Drawing to Screen)
+    # 3. RENDERING
     # ==========================================
     screen.fill(BG_COLOR)
 
@@ -281,12 +281,11 @@ while running:
             overlay.fill((10, 10, 15))
             screen.blit(overlay, (0, 0))
             
-            win_txt = f"{winner_name} VENCEU!"
+            win_txt = f"{winner_name} Won!"
             win_surf = MENU_FONT.render(win_txt.upper(), True, (255, 215, 0))
             screen.blit(win_surf, (WIDTH//2 - win_surf.get_width()//2, HEIGHT//2 - 50))
-            
-            # --- NOVO TEXTO AQUI ---
-            restart_txt = MENU_FONT.render("A iniciar nova partida...", True, (150, 150, 150))
+
+            restart_txt = MENU_FONT.render("Starting new match...", True, (150, 150, 150))
             screen.blit(restart_txt, (WIDTH//2 - restart_txt.get_width()//2, HEIGHT//2 + 50))
         
     pygame.display.flip()

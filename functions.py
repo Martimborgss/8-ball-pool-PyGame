@@ -55,7 +55,7 @@ def create_ball(x, y, number):
         "prev_x": x, 
         "prev_y": y,
         "bounce_factor": 0.95, # Pool balls are very hard and bouncy
-        "friction": 0.998,     # Table felt friction (slides smoothly)
+        "friction": 0.9985,     # Table felt friction (slides smoothly)
         "nearby_balls": []
 }
 
