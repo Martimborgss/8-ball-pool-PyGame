@@ -3,3 +3,5 @@
 
 V0.1 -> Simple game logic, physics and collision
 V0.1.1 -> Friction adjustments
+
+V0.2 -> code clean up and physics improvments

@@ -4,9 +4,23 @@ import math
 pygame.font.init()
 POOL_FONT = pygame.font.SysFont("Arial", 14, bold=True)
 
-TYPE_NONE = None
-TYPE_SOLID = "solid"
-TYPE_STRIPED = "striped"
+BALL_RADIUS = 20
+POCKET_RADIUS = 35
+
+def are_balls_moving(balls, threshold=0.2):
+    """Returns True if any ball has velocity above the threshold."""
+    return any(math.sqrt(b["vel_x"]**2 + b["vel_y"]**2) > threshold for b in balls)
+
+def get_pocket_positions(table_x, table_y, table_w, table_h, cushion):
+    """Returns the 6 pocket positions for a standard pool table."""
+    return [
+        (table_x + cushion, table_y + cushion),
+        (table_x + table_w // 2, table_y + cushion - 5),
+        (table_x + table_w - cushion, table_y + cushion),
+        (table_x + cushion, table_y + table_h - cushion),
+        (table_x + table_w // 2, table_y + table_h - cushion + 5),
+        (table_x + table_w - cushion, table_y + table_h - cushion)
+    ]
 
 # --- Ball ---
 
@@ -24,7 +38,7 @@ BALL_COLORS = {
 
 def create_ball(x, y, number):
     """Creates a pool ball based on its standard number (0 is the Cue ball)."""
-    radius = 20 # All pool balls are exactly the same size
+    radius = BALL_RADIUS
     
     if number == 0:
         color = (255, 255, 255)
@@ -54,8 +68,8 @@ def create_ball(x, y, number):
         "vel_y": 0, 
         "prev_x": x, 
         "prev_y": y,
-        "bounce_factor": 0.95, # Pool balls are very hard and bouncy
-        "friction": 0.9985,     # Table felt friction (slides smoothly)
+        "bounce_factor": 0.96, # Coefficient of restitution for ball-ball hits
+        "friction": 0.991,      # Table felt friction per frame
         "nearby_balls": []
 }
 
@@ -103,11 +117,6 @@ def draw_ball(screen, ball):
     # Draw a thin dark outline for a clean 2D look
     pygame.draw.circle(screen, (50, 50, 50), (x, y), r, 2)
 
-def get_ball_type(number):
-    if number == 0: return "cue"
-    if number == 8: return "8ball"
-    return TYPE_SOLID if number < 8 else TYPE_STRIPED
-
 # --- Physics ---
 
 def update_inertia(ball):
@@ -118,91 +127,90 @@ def update_inertia(ball):
         ball["prev_x"] = ball["x"]
         ball["prev_y"] = ball["y"]
 
-def apply_physics(ball, gravity, dt_multiplier):
-    """Updates position based on delta time to ensure consistent speed."""
+def apply_physics(ball, dt_multiplier):
+    """Updates position, applies friction, and stops near-zero velocities."""
     if not ball["dragging"]:
-        # Multiply gravity and velocity by the dt_multiplier
-        ball["vel_y"] += gravity * dt_multiplier
         ball["x"] += ball["vel_x"] * dt_multiplier
         ball["y"] += ball["vel_y"] * dt_multiplier
 
-def _collide_with_walls(ball, table_x, table_y, table_w, table_h, cushion, dt_multiplier):
-    """Handles collisions and applies frame-independent friction."""
-    
-    adjusted_friction = ball["friction"] ** dt_multiplier
+        # Frame-independent friction (applied once per frame)
+        adjusted_friction = ball["friction"] ** dt_multiplier
+        ball["vel_x"] *= adjusted_friction
+        ball["vel_y"] *= adjusted_friction
 
-    # Collision Left/Right
-    if ball["x"] - ball["radius"] < table_x + cushion:
-        ball["x"] = table_x + cushion + ball["radius"]
-        ball["vel_x"] = -ball["vel_x"] * ball["bounce_factor"]
-    elif ball["x"] + ball["radius"] > table_x + table_w - cushion:
-        ball["x"] = table_x + table_w - cushion - ball["radius"]
-        ball["vel_x"] = -ball["vel_x"] * ball["bounce_factor"]
+        # Stop balls that are barely moving
+        speed_sq = ball["vel_x"]**2 + ball["vel_y"]**2
+        if speed_sq < 0.01:  # threshold² = 0.1²
+            ball["vel_x"] = 0
+            ball["vel_y"] = 0
 
-    # Collision Up/Down
-    if ball["y"] - ball["radius"] < table_y + cushion:
-        ball["y"] = table_y + cushion + ball["radius"]
-        ball["vel_y"] = -ball["vel_y"] * ball["bounce_factor"]
-    elif ball["y"] + ball["radius"] > table_y + table_h - cushion:
-        ball["y"] = table_y + table_h - cushion - ball["radius"]
-        ball["vel_y"] = -ball["vel_y"] * ball["bounce_factor"]
-        
-    # Friction
-    ball["vel_x"] *= adjusted_friction
-    ball["vel_y"] *= adjusted_friction
-    
-    if abs(ball["vel_x"]) < 0.1: ball["vel_x"] = 0
-    if abs(ball["vel_y"]) < 0.1: ball["vel_y"] = 0
+CUSHION_BOUNCE = 0.75  # Energy retained when hitting a cushion
+
+def _collide_with_walls(ball, table_x, table_y, table_w, table_h, cushion):
+    """Resolves wall penetration and reflects velocity off cushions."""
+    left = table_x + cushion + ball["radius"]
+    right = table_x + table_w - cushion - ball["radius"]
+    top = table_y + cushion + ball["radius"]
+    bottom = table_y + table_h - cushion - ball["radius"]
+
+    if ball["x"] < left:
+        ball["x"] = left
+        ball["vel_x"] = abs(ball["vel_x"]) * CUSHION_BOUNCE
+    elif ball["x"] > right:
+        ball["x"] = right
+        ball["vel_x"] = -abs(ball["vel_x"]) * CUSHION_BOUNCE
+
+    if ball["y"] < top:
+        ball["y"] = top
+        ball["vel_y"] = abs(ball["vel_y"]) * CUSHION_BOUNCE
+    elif ball["y"] > bottom:
+        ball["y"] = bottom
+        ball["vel_y"] = -abs(ball["vel_y"]) * CUSHION_BOUNCE
 
 def _collide_with_ball(ball, neighbor):
-    """Handles math for collision between two balls."""
+    """Resolves collision between two equal-mass pool balls."""
     dx = neighbor["x"] - ball["x"]
     dy = neighbor["y"] - ball["y"]
-    distance = math.sqrt(dx**2 + dy**2)
+    distance_sq = dx * dx + dy * dy
     sum_radii = ball["radius"] + neighbor["radius"]
 
-    if distance < sum_radii:
-        if distance == 0:
-            distance = 0.01
-            dx = 0.01
+    if distance_sq >= sum_radii * sum_radii:
+        return  # No collision
 
-        nx = dx / distance
-        ny = dy / distance
+    distance = math.sqrt(distance_sq) if distance_sq > 0 else 0.001
+    nx = dx / distance
+    ny = dy / distance
 
-        overlap = sum_radii - distance
-        mass_ratio_ball = 0.5 # Pool balls have equal mass
-        mass_ratio_neighbor = 0.5
+    # Separate overlapping balls (equal mass, split evenly)
+    overlap = sum_radii - distance
+    ball["x"] -= nx * overlap * 0.5
+    ball["y"] -= ny * overlap * 0.5
+    neighbor["x"] += nx * overlap * 0.5
+    neighbor["y"] += ny * overlap * 0.5
 
-        ball["x"] -= nx * overlap * mass_ratio_ball
-        ball["y"] -= ny * overlap * mass_ratio_ball
-        neighbor["x"] += nx * overlap * mass_ratio_neighbor
-        neighbor["y"] += ny * overlap * mass_ratio_neighbor
+    # Relative velocity along collision normal
+    rv_x = ball["vel_x"] - neighbor["vel_x"]
+    rv_y = ball["vel_y"] - neighbor["vel_y"]
+    vel_along_normal = rv_x * nx + rv_y * ny
 
-        rv_x = neighbor["vel_x"] - ball["vel_x"]
-        rv_y = neighbor["vel_y"] - ball["vel_y"]
-        vel_along_normal = rv_x * nx + rv_y * ny
+    # Only resolve if balls are moving toward each other
+    if vel_along_normal <= 0:
+        return
 
-        if vel_along_normal > 0:
-            return
+    # For equal-mass elastic collision: swap the normal components
+    # Apply bounce factor for slight energy loss
+    bounce = ball["bounce_factor"]
+    impulse = vel_along_normal * (1 + bounce) * 0.5
 
-        bounce = min(ball["bounce_factor"], neighbor["bounce_factor"])
-        m1 = ball["radius"]
-        m2 = neighbor["radius"]
+    ball["vel_x"] -= impulse * nx
+    ball["vel_y"] -= impulse * ny
+    neighbor["vel_x"] += impulse * nx
+    neighbor["vel_y"] += impulse * ny
 
-        impulse = -(1 + bounce) * vel_along_normal
-        impulse /= (1 / m1) + (1 / m2)
-
-        impulse_x = impulse * nx
-        impulse_y = impulse * ny
-
-        ball["vel_x"] -= impulse_x / m1
-        ball["vel_y"] -= impulse_y / m1
-        neighbor["vel_x"] += impulse_x / m2
-        neighbor["vel_y"] += impulse_y / m2
-
-def check_all_collisions(balls, table_x, table_y, table_w, table_h, cushion, dt_multiplier):
+def check_all_collisions(balls, table_x, table_y, table_w, table_h, cushion):
+    """Resolves all ball-ball and ball-wall overlaps for one sub-step."""
     for ball in balls:
-        _collide_with_walls(ball, table_x, table_y, table_w, table_h, cushion, dt_multiplier)
+        _collide_with_walls(ball, table_x, table_y, table_w, table_h, cushion)
         for neighbor in ball["nearby_balls"]:
             if id(ball) < id(neighbor):
                 _collide_with_ball(ball, neighbor)
@@ -281,23 +289,15 @@ def draw_cue_stick(screen, cue_ball, mouse_pos, is_charging):
 
 def check_pockets(balls, table_x, table_y, table_w, table_h, cushion):
     """Checks if any ball has fallen into a pocket and returns data of sunk balls."""
-    pockets = [
-        (table_x + cushion, table_y + cushion),
-        (table_x + table_w // 2, table_y + cushion - 5),
-        (table_x + table_w - cushion, table_y + cushion),
-        (table_x + cushion, table_y + table_h - cushion),
-        (table_x + table_w // 2, table_y + table_h - cushion + 5),
-        (table_x + table_w - cushion, table_y + table_h - cushion)
-    ]
+    pockets = get_pocket_positions(table_x, table_y, table_w, table_h, cushion)
     
-    pocket_radius = 35
     balls_to_remove = []
     sunk_data = [] # Track complete data of potted balls
 
     for ball in balls:
         for px, py in pockets:
             dist = math.sqrt((ball["x"] - px)**2 + (ball["y"] - py)**2)
-            if dist < pocket_radius:
+            if dist < POCKET_RADIUS:
                 balls_to_remove.append(ball)
                 # Store type and number so we can respawn it if needed
                 sunk_data.append({"type": ball["type"], "number": ball["number"]}) 
@@ -315,20 +315,11 @@ def check_pockets(balls, table_x, table_y, table_w, table_h, cushion):
 
 def draw_pockets(screen, table_x, table_y, table_w, table_h, cushion):
     """Draws the 6 pockets on the table."""
-    pockets = [
-        (table_x + cushion, table_y + cushion),
-        (table_x + table_w // 2, table_y + cushion - 5),
-        (table_x + table_w - cushion, table_y + cushion),
-        (table_x + cushion, table_y + table_h - cushion),
-        (table_x + table_w // 2, table_y + table_h - cushion + 5),
-        (table_x + table_w - cushion, table_y + table_h - cushion)
-    ]
+    pockets = get_pocket_positions(table_x, table_y, table_w, table_h, cushion)
     
     for px, py in pockets:
-        # Draw pocket hole (black)
-        pygame.draw.circle(screen, (10, 10, 10), (int(px), int(py)), 35)
-        # Draw a subtle rim/shadow for depth
-        pygame.draw.circle(screen, (30, 30, 30), (int(px), int(py)), 35, 3)
+        pygame.draw.circle(screen, (10, 10, 10), (int(px), int(py)), POCKET_RADIUS)
+        pygame.draw.circle(screen, (30, 30, 30), (int(px), int(py)), POCKET_RADIUS, 3)
 
 def draw_table(screen, x, y, w, h, cushion, colors):
     """
@@ -355,28 +346,23 @@ def draw_table(screen, x, y, w, h, cushion, colors):
 
 def draw_hud(screen, width, p1_name, p2_name, p1_score, p2_score, current_turn, assigned_types):
     center_x = width // 2
-    header_height = 180 # A altura da barra definida no main.py
+    header_height = 180
     
-    # 1. Desenhar indicador de TURNO centralizado
+    # 1. Draw turn indicator (centered)
     turn_text = f"{p1_name if current_turn == 0 else p2_name}'s Turn"
     turn_color = (0, 100, 255) if current_turn == 0 else (220, 30, 30)
     
-    # Renderizar o texto
     turn_surf = POOL_FONT.render(turn_text.upper(), True, turn_color)
-    # Centraliza exatamente no meio do header
     turn_rect = turn_surf.get_rect(center=(center_x, header_height // 2))
-    
-    # O "cilindro" (banner_rect) foi removido para limpar a UI
     screen.blit(turn_surf, turn_rect)
 
-    # 2. Desenhar Avatares e Scores
+    # 2. Draw avatars and scores
     p1_active = (current_turn == 0)
     p2_active = (current_turn == 1)
 
-    # Ajuste de posição: P1 à esquerda do centro, P2 à direita do centro
-    # x_offset define a distância do centro para cada lado
+    # Position: P1 left of center, P2 right of center
     x_offset = 300 
-    avatar_y = 55 # Posição vertical dos avatares
+    avatar_y = 55
 
     draw_avatar(screen, center_x - x_offset - 70, avatar_y, p1_name, (0, 100, 255), p1_score, p1_active, assigned_types[0])
     draw_avatar(screen, center_x + x_offset, avatar_y, p2_name, (220, 30, 30), p2_score, p2_active, assigned_types[1])  
